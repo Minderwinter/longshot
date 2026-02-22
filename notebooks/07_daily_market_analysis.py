@@ -98,52 +98,32 @@ def days_to_expiry_dist(alt, mo, query, mkt_date):
     dte_data = query(f"""
         WITH dte AS (
             SELECT
-                date_diff('day', date('{mkt_date}'), date(from_iso8601_timestamp(close_time))) AS days_to_expiry
+                date_diff('day', date('{mkt_date}'), date(from_iso8601_timestamp(close_time))) AS raw_dte
             FROM daily_markets
             WHERE close_time IS NOT NULL
               AND close_time != ''
+              AND date_diff('day', date('{mkt_date}'), date(from_iso8601_timestamp(close_time))) >= 1
         )
         SELECT
-            CASE
-                WHEN days_to_expiry < 0  THEN -1
-                WHEN days_to_expiry <= 1 THEN 1
-                WHEN days_to_expiry <= 3 THEN 3
-                WHEN days_to_expiry <= 7 THEN 7
-                WHEN days_to_expiry <= 14 THEN 14
-                WHEN days_to_expiry <= 30 THEN 30
-                WHEN days_to_expiry <= 60 THEN 60
-                WHEN days_to_expiry <= 90 THEN 90
-                WHEN days_to_expiry <= 180 THEN 180
-                WHEN days_to_expiry <= 365 THEN 365
-                ELSE 999
-            END AS dte_bucket,
-            CASE
-                WHEN days_to_expiry < 0  THEN 'Past due'
-                WHEN days_to_expiry <= 1 THEN '0-1d'
-                WHEN days_to_expiry <= 3 THEN '2-3d'
-                WHEN days_to_expiry <= 7 THEN '4-7d'
-                WHEN days_to_expiry <= 14 THEN '8-14d'
-                WHEN days_to_expiry <= 30 THEN '15-30d'
-                WHEN days_to_expiry <= 60 THEN '31-60d'
-                WHEN days_to_expiry <= 90 THEN '61-90d'
-                WHEN days_to_expiry <= 180 THEN '91-180d'
-                WHEN days_to_expiry <= 365 THEN '181-365d'
-                ELSE '365d+'
-            END AS dte_label,
+            LEAST(raw_dte, 29) AS dte_day,
+            CASE WHEN raw_dte >= 29 THEN '29+' ELSE CAST(raw_dte AS VARCHAR) END AS dte_label,
             count(*) AS market_count
         FROM dte
-        GROUP BY 1, 2
+        GROUP BY LEAST(raw_dte, 29),
+                 CASE WHEN raw_dte >= 29 THEN '29+' ELSE CAST(raw_dte AS VARCHAR) END
         ORDER BY 1
     """)
+
+    dte_sort = [str(i) for i in range(1, 29)] + ["29+"]
 
     dte_chart = (
         alt.Chart(dte_data)
         .mark_bar()
         .encode(
-            alt.X("dte_label:N", sort=list(dte_data["dte_label"]), title="Days to Expiry"),
+            alt.X("dte_label:N", sort=dte_sort, title="Days to Expiry"),
             alt.Y("market_count:Q", title="Number of Markets"),
             tooltip=[
-                alt.Tooltip("dte_label:N", title="Bucket"),
+                alt.Tooltip("dte_label:N", title="DTE"),
                 alt.Tooltip("market_count:Q", title="Markets", format=","),
             ],
         )
@@ -159,11 +139,71 @@ def days_to_expiry_dist(alt, mo, query, mkt_date):
 def dte_commentary(mo):
     mo.md(
         """
-        The days-to-expiry distribution is bimodal. About 45% of active markets
-        close within the next day — these are predominantly daily crypto and
-        financials contracts that roll over. The second concentration appears in
-        the 6-12 month range, reflecting longer-dated political, sports, and
-        world-event markets. Very few markets fall in the 2-7 day window.
+        With daily granularity, the 1-day bin dominates (~22k markets) — these
+        are predominantly daily crypto and financials contracts that roll over.
+        A secondary spike appears at day 14, likely biweekly expiry contracts.
+        Days 3-13 are very sparse, and the 29+ catch-all aggregates ~19k
+        longer-dated markets (months to years out), making the distribution
+        clearly bimodal: short-term rollers and long-horizon event markets.
+        """
+    )
+    return ()
+
+
+@app.cell
+def dte_volume_dist(alt, mo, query, mkt_date):
+    dte_vol_data = query(f"""
+        WITH dte_v AS (
+            SELECT
+                date_diff('day', date('{mkt_date}'), date(from_iso8601_timestamp(close_time))) AS raw_dte,
+                volume_24h
+            FROM daily_markets
+            WHERE close_time IS NOT NULL
+              AND close_time != ''
+              AND date_diff('day', date('{mkt_date}'), date(from_iso8601_timestamp(close_time))) >= 1
+              AND volume_24h IS NOT NULL
+        )
+        SELECT
+            LEAST(raw_dte, 29) AS dte_vol_day,
+            CASE WHEN raw_dte >= 29 THEN '29+' ELSE CAST(raw_dte AS VARCHAR) END AS dte_vol_label,
+            sum(volume_24h) AS total_volume_24h
+        FROM dte_v
+        GROUP BY LEAST(raw_dte, 29),
+                 CASE WHEN raw_dte >= 29 THEN '29+' ELSE CAST(raw_dte AS VARCHAR) END
+        ORDER BY 1
+    """)
+
+    dte_vol_sort = [str(i) for i in range(1, 29)] + ["29+"]
+
+    dte_vol_chart = (
+        alt.Chart(dte_vol_data)
+        .mark_bar(color="teal")
+        .encode(
+            alt.X("dte_vol_label:N", sort=dte_vol_sort, title="Days to Expiry"),
+            alt.Y("total_volume_24h:Q", title="24h Trade Volume (contracts)"),
+            tooltip=[
+                alt.Tooltip("dte_vol_label:N", title="DTE"),
+                alt.Tooltip("total_volume_24h:Q", title="24h Volume", format=","),
+            ],
+        )
+        .properties(width=700, height=400, title="24h Trade Volume by Days to Expiry")
+    )
+
+    mo.md("## 24-Hour Trade Volume by Days to Expiry")
+    mo.ui.altair_chart(dte_vol_chart)
+    return ()
+
+
+@app.cell
+def dte_volume_commentary(mo):
+    mo.md(
+        """
+        Volume tells a different story from market count. Day 14 shows a massive
+        spike (~25M contracts in 24h) that dwarfs all other buckets, even
+        though it has far fewer markets than day 1. The 29+ catch-all is the
+        second-largest volume bin (~9M), while the 1-day bin that dominates
+        market count comes in third (~3M). Liquidity clusters around specific
+        expiry cycles rather than following the market-count distribution.
         """
     )
     return ()
@@ -332,54 +372,34 @@ def longshot_dte_dist(alt, mo, query, mkt_date):
     ls_dte_data = query(f"""
         WITH ls_dte AS (
             SELECT
-                date_diff('day', date('{mkt_date}'), date(from_iso8601_timestamp(close_time))) AS days_to_expiry
+                date_diff('day', date('{mkt_date}'), date(from_iso8601_timestamp(close_time))) AS raw_dte
             FROM daily_markets
             WHERE close_time IS NOT NULL
               AND close_time != ''
               AND last_price >= 3
               AND last_price <= 15
+              AND date_diff('day', date('{mkt_date}'), date(from_iso8601_timestamp(close_time))) >= 1
         )
         SELECT
-            CASE
-                WHEN days_to_expiry < 0  THEN -1
-                WHEN days_to_expiry <= 1 THEN 1
-                WHEN days_to_expiry <= 3 THEN 3
-                WHEN days_to_expiry <= 7 THEN 7
-                WHEN days_to_expiry <= 14 THEN 14
-                WHEN days_to_expiry <= 30 THEN 30
-                WHEN days_to_expiry <= 60 THEN 60
-                WHEN days_to_expiry <= 90 THEN 90
-                WHEN days_to_expiry <= 180 THEN 180
-                WHEN days_to_expiry <= 365 THEN 365
-                ELSE 999
-            END AS ls_dte_bucket,
-            CASE
-                WHEN days_to_expiry < 0  THEN 'Past due'
-                WHEN days_to_expiry <= 1 THEN '0-1d'
-                WHEN days_to_expiry <= 3 THEN '2-3d'
-                WHEN days_to_expiry <= 7 THEN '4-7d'
-                WHEN days_to_expiry <= 14 THEN '8-14d'
-                WHEN days_to_expiry <= 30 THEN '15-30d'
-                WHEN days_to_expiry <= 60 THEN '31-60d'
-                WHEN days_to_expiry <= 90 THEN '61-90d'
-                WHEN days_to_expiry <= 180 THEN '91-180d'
-                WHEN days_to_expiry <= 365 THEN '181-365d'
-                ELSE '365d+'
-            END AS ls_dte_label,
+            LEAST(raw_dte, 29) AS ls_dte_day,
+            CASE WHEN raw_dte >= 29 THEN '29+' ELSE CAST(raw_dte AS VARCHAR) END AS ls_dte_label,
             count(*) AS ls_market_count
         FROM ls_dte
-        GROUP BY 1, 2
+        GROUP BY LEAST(raw_dte, 29),
+                 CASE WHEN raw_dte >= 29 THEN '29+' ELSE CAST(raw_dte AS VARCHAR) END
         ORDER BY 1
     """)
+
+    ls_dte_sort = [str(i) for i in range(1, 29)] + ["29+"]
 
     ls_dte_chart = (
         alt.Chart(ls_dte_data)
         .mark_bar(color="darkorange")
         .encode(
-            alt.X("ls_dte_label:N", sort=list(ls_dte_data["ls_dte_label"]), title="Days to Expiry"),
+            alt.X("ls_dte_label:N", sort=ls_dte_sort, title="Days to Expiry"),
             alt.Y("ls_market_count:Q", title="Number of Markets"),
             tooltip=[
-                alt.Tooltip("ls_dte_label:N", title="Bucket"),
+                alt.Tooltip("ls_dte_label:N", title="DTE"),
                 alt.Tooltip("ls_market_count:Q", title="Markets", format=","),
             ],
         )
@@ -395,13 +415,73 @@ def longshot_dte_dist(alt, mo, query, mkt_date):
 def longshot_dte_commentary(mo):
     mo.md(
         """
-        The longshot DTE distribution is strikingly different from the overall
-        market. The 0-1 day bucket drops from 45% to just 2%, while 181-365 day
-        and 365+ day markets together account for over 60% of longshots. This
-        makes sense: short-dated markets tend to have resolved most of their
-        uncertainty, so longshot pricing at $0.03-$0.15 is rare for expiring
-        contracts. The longer time horizon gives longshots more "optionality" —
-        low-probability events have more time to materialize.
+        The longshot DTE profile is strikingly different. The 1-day bin shrinks
+        to ~92 markets (vs 22k overall) — short-dated contracts have mostly
+        resolved their uncertainty, leaving few in the 3-15 cent band. The 29+
+        catch-all dominates with ~4,500 markets (83% of all longshots). Day 7
+        and day 14 show modest spikes, mirroring the weekly/biweekly expiry
+        structure seen in the overall market.
+        """
+    )
+    return ()
+
+
+@app.cell
+def longshot_dte_volume_dist(alt, mo, query, mkt_date):
+    ls_dte_vol_data = query(f"""
+        WITH ls_dte_v AS (
+            SELECT
+                date_diff('day', date('{mkt_date}'), date(from_iso8601_timestamp(close_time))) AS raw_dte,
+                volume_24h
+            FROM daily_markets
+            WHERE close_time IS NOT NULL
+              AND close_time != ''
+              AND last_price >= 3
+              AND last_price <= 15
+              AND date_diff('day', date('{mkt_date}'), date(from_iso8601_timestamp(close_time))) >= 1
+              AND volume_24h IS NOT NULL
+        )
+        SELECT
+            LEAST(raw_dte, 29) AS ls_dte_vol_day,
+            CASE WHEN raw_dte >= 29 THEN '29+' ELSE CAST(raw_dte AS VARCHAR) END AS ls_dte_vol_label,
+            sum(volume_24h) AS ls_total_vol_24h
+        FROM ls_dte_v
+        GROUP BY LEAST(raw_dte, 29),
+                 CASE WHEN raw_dte >= 29 THEN '29+' ELSE CAST(raw_dte AS VARCHAR) END
+        ORDER BY 1
+    """)
+
+    ls_dte_vol_sort = [str(i) for i in range(1, 29)] + ["29+"]
+
+    ls_dte_vol_chart = (
+        alt.Chart(ls_dte_vol_data)
+        .mark_bar(color="orangered")
+        .encode(
+            alt.X("ls_dte_vol_label:N", sort=ls_dte_vol_sort, title="Days to Expiry"),
+            alt.Y("ls_total_vol_24h:Q", title="24h Trade Volume (contracts)"),
+            tooltip=[
+                alt.Tooltip("ls_dte_vol_label:N", title="DTE"),
+                alt.Tooltip("ls_total_vol_24h:Q", title="24h Volume", format=","),
+            ],
+        )
+        .properties(width=700, height=400, title="Longshot 24h Trade Volume by Days to Expiry")
+    )
+
+    mo.md("## Longshot Markets — 24h Trade Volume by Days to Expiry")
+    mo.ui.altair_chart(ls_dte_vol_chart)
+    return ()
+
+
+@app.cell
+def longshot_dte_volume_commentary(mo):
+    mo.md(
+        """
+        Among longshots, day 14 again dominates 24h volume (~6M contracts),
+        consistent with the overall pattern of heavy biweekly-expiry trading.
+        The 29+ bucket follows at ~3.9M, and day 7 shows ~900K — a weekly
+        expiry effect. Day 1 longshots trade ~774K in volume despite having
+        only 92 markets, indicating high per-market turnover on the shortest-
+        dated longshots.
         """
     )
     return ()
