@@ -20,7 +20,6 @@ class Market(BaseModel):
     open_interest: int | None = None
     close_time: str | None = None
     open_time: str | None = None
-    category: str | None = None
     result: str | None = None
     created_time: str | None = None
 

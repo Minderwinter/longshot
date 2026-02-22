@@ -32,7 +32,6 @@ MARKETS_SCHEMA = pa.schema(
         pa.field("open_interest", pa.int64()),
         pa.field("close_time", pa.string()),
         pa.field("open_time", pa.string()),
-        pa.field("category", pa.string()),
         pa.field("result", pa.string()),
         pa.field("created_time", pa.string()),
     ]
@@ -83,7 +82,6 @@ def _markets_to_table(markets: list[Market]) -> pa.Table:
         "open_interest": [m.open_interest for m in markets],
         "close_time": [m.close_time for m in markets],
         "open_time": [m.open_time for m in markets],
-        "category": [m.category for m in markets],
         "result": [m.result for m in markets],
         "created_time": [m.created_time for m in markets],
     }
