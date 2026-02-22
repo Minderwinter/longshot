@@ -143,25 +143,31 @@ def pull_and_write_events(
     client.close()
     evt_total = len(all_events)
 
-    # Build table: 6 existing fields + markets_json
+    # Build table: event fields + markets_json
     evt_schema = pa.schema([
         pa.field("event_ticker", pa.string()),
+        pa.field("series_ticker", pa.string()),
         pa.field("category", pa.string()),
         pa.field("title", pa.string()),
         pa.field("sub_title", pa.string()),
         pa.field("mutually_exclusive", pa.bool_()),
-        pa.field("series_ticker", pa.string()),
+        pa.field("collateral_return_type", pa.string()),
+        pa.field("strike_date", pa.string()),
+        pa.field("strike_period", pa.string()),
         pa.field("markets_json", pa.string()),
     ])
 
     table = pa.table(
         {
             "event_ticker": [e["event_ticker"] for e in all_events],
+            "series_ticker": [e.get("series_ticker") for e in all_events],
             "category": [e.get("category") for e in all_events],
             "title": [e.get("title") for e in all_events],
             "sub_title": [e.get("sub_title") for e in all_events],
             "mutually_exclusive": [e.get("mutually_exclusive") for e in all_events],
-            "series_ticker": [e.get("series_ticker") for e in all_events],
+            "collateral_return_type": [e.get("collateral_return_type") for e in all_events],
+            "strike_date": [e.get("strike_date") for e in all_events],
+            "strike_period": [e.get("strike_period") for e in all_events],
             "markets_json": [
                 json.dumps(e.get("markets", [])) for e in all_events
             ],

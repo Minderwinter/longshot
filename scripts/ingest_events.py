@@ -23,11 +23,14 @@ logger = logging.getLogger(__name__)
 EVENTS_SCHEMA = pa.schema(
     [
         pa.field("event_ticker", pa.string()),
+        pa.field("series_ticker", pa.string()),
         pa.field("category", pa.string()),
         pa.field("title", pa.string()),
         pa.field("sub_title", pa.string()),
         pa.field("mutually_exclusive", pa.bool_()),
-        pa.field("series_ticker", pa.string()),
+        pa.field("collateral_return_type", pa.string()),
+        pa.field("strike_date", pa.string()),
+        pa.field("strike_period", pa.string()),
     ]
 )
 
@@ -72,11 +75,14 @@ def run() -> None:
     table = pa.table(
         {
             "event_ticker": [e["event_ticker"] for e in events],
+            "series_ticker": [e.get("series_ticker") for e in events],
             "category": [e.get("category") for e in events],
             "title": [e.get("title") for e in events],
             "sub_title": [e.get("sub_title") for e in events],
             "mutually_exclusive": [e.get("mutually_exclusive") for e in events],
-            "series_ticker": [e.get("series_ticker") for e in events],
+            "collateral_return_type": [e.get("collateral_return_type") for e in events],
+            "strike_date": [e.get("strike_date") for e in events],
+            "strike_period": [e.get("strike_period") for e in events],
         },
         schema=EVENTS_SCHEMA,
     )
