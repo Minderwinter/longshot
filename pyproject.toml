@@ -1,0 +1,20 @@
+[project]
+name = "longshot"
+version = "0.1.0"
+description = "Longshot bias analysis on prediction markets"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx",
+    "cryptography",
+    "python-dotenv",
+    "pydantic>=2",
+    "pyarrow",
+    "s3fs",
+    "marimo",
+    "pandas",
+    "altair",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
