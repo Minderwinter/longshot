@@ -27,18 +27,36 @@ event combo markets). Defined in `longshot/api/models.py:Market` and schema in
 | `event_ticker` | `string` | No | Ticker of the parent event this market belongs to. Foreign key to `events.event_ticker`. |
 | `title` | `string` | No | Human-readable description of the market outcome (e.g. "High of 55°F or above"). |
 | `status` | `string` | No | Lifecycle state. Values returned by the API: `initialized`, `inactive`, `active`, `closed`, `determined`, `disputed`, `amended`, `finalized`. Note: the API accepts `open`/`settled` as filter aliases but returns `active`/`finalized` in responses. |
+| `market_type` | `string` | Yes | Type of market (e.g. `"binary"`). |
+| `subtitle` | `string` | Yes | Additional market context beyond `title`. |
+| `yes_sub_title` | `string` | Yes | Label for the YES side of the market. |
+| `no_sub_title` | `string` | Yes | Label for the NO side of the market. |
+| `series_ticker` | `string` | Yes | Ticker of the parent series (e.g. `HIGHNY`). Allows series-level analysis without joining through events. |
 | `yes_bid` | `float64` | Yes | Best bid price for the YES side, in **cents** (0–100). Divide by 100 for implied probability. |
 | `yes_ask` | `float64` | Yes | Best ask price for the YES side, in **cents** (0–100). |
 | `no_bid` | `float64` | Yes | Best bid price for the NO side, in **cents** (0–100). |
 | `no_ask` | `float64` | Yes | Best ask price for the NO side, in **cents** (0–100). |
 | `last_price` | `float64` | Yes | Last traded price, in **cents** (0–100). |
+| `previous_yes_bid` | `float64` | Yes | Prior best YES bid. Enables spread/movement analysis without candlestick data. |
+| `previous_yes_ask` | `float64` | Yes | Prior best YES ask. |
+| `previous_price` | `float64` | Yes | Prior last-traded price. |
 | `volume` | `int64` | Yes | Total number of contracts ever traded on this market. |
 | `volume_24h` | `int64` | Yes | Number of contracts traded in the trailing 24-hour window. |
 | `open_interest` | `int64` | Yes | Number of contracts currently outstanding (open positions). |
+| `notional_value` | `int64` | Yes | Contract notional value in cents. |
 | `close_time` | `string` | Yes | ISO 8601 timestamp when the market closed (or will close) for trading. |
 | `open_time` | `string` | Yes | ISO 8601 timestamp when the market opened (or will open) for trading. |
-| `result` | `string` | Yes | Settlement outcome: `"yes"`, `"no"`, or `"all_no"`. `NULL` if the market has not yet settled. |
+| `expiration_time` | `string` | Yes | ISO 8601 timestamp when the market expires. Distinct from `close_time` — markets can close for trading before they expire/settle. |
+| `expected_expiration_time` | `string` | Yes | ISO 8601 timestamp of expected expiration (may differ from `latest_expiration_time`). |
+| `latest_expiration_time` | `string` | Yes | ISO 8601 timestamp of the latest possible expiration. |
 | `created_time` | `string` | Yes | ISO 8601 timestamp when the market was first created on Kalshi. |
+| `updated_time` | `string` | Yes | ISO 8601 timestamp of last modification. Useful for incremental ingestion and change detection. |
+| `result` | `string` | Yes | Settlement outcome: `"yes"`, `"no"`, or `"all_no"`. `NULL` if the market has not yet settled. |
+| `settlement_value` | `int64` | Yes | Actual settlement payout value. Important for P&L analysis. |
+| `can_close_early` | `bool` | Yes | Whether the market can settle before its scheduled close. Affects risk modeling. |
+| `strike_type` | `string` | Yes | Type of strike for the market. |
+| `rules_primary` | `string` | Yes | Resolution rules text. Useful for NLP analysis of market structure. |
+| `rules_secondary` | `string` | Yes | Additional resolution criteria. |
 
 ---
 
@@ -48,19 +66,22 @@ Each row represents an event — a container that groups related markets under a
 common question or topic. Events carry the **category** classification, which
 is not present on the markets table.
 
-**S3 location:** `s3://{bucket}/{prefix}/events/data.parquet` (single file, no
-partitioning).
+**S3 location:** `s3://{bucket}/{prefix}/events/all/data.parquet` (single file,
+no partitioning).
 
 **Source:** `GET /events`. Defined in `scripts/ingest_events.py:EVENTS_SCHEMA`.
 
 | Column | Arrow Type | Nullable | Description |
 |--------|-----------|----------|-------------|
 | `event_ticker` | `string` | No | Unique event identifier (e.g. `HIGHNY-22NOV27`). Primary key. |
+| `series_ticker` | `string` | Yes | Ticker of the parent series this event belongs to (e.g. `HIGHNY`). Series group recurring events of the same type. |
 | `category` | `string` | Yes | Topic classification (e.g. `"Climate and Weather"`, `"Politics"`, `"Economics"`, `"Sports"`). |
 | `title` | `string` | Yes | Human-readable event title (e.g. "What will the high temp be in NYC on Nov 27, 2022?"). |
 | `sub_title` | `string` | Yes | Additional context or date qualifier (e.g. "On Nov 27, 2022"). |
 | `mutually_exclusive` | `bool` | No | Whether the markets within this event are mutually exclusive (exactly one resolves YES). |
-| `series_ticker` | `string` | Yes | Ticker of the parent series this event belongs to (e.g. `HIGHNY`). Series group recurring events of the same type. |
+| `collateral_return_type` | `string` | Yes | How collateral is returned on settlement. |
+| `strike_date` | `string` | Yes | ISO 8601 date/timestamp of the event's "strike" (e.g. the weather observation date). Very useful for time-series analysis of recurring events. |
+| `strike_period` | `string` | Yes | Period qualifier for the strike (e.g. daily, weekly). |
 
 ---
 
@@ -84,6 +105,7 @@ ingested as part of the snapshot pipeline and scoped to a time window.
 | `count` | `int64` | No | Number of contracts in this trade. |
 | `taker_side` | `string` | Yes | Which side the taker was on: `"yes"` or `"no"`. |
 | `created_time` | `string` | Yes | ISO 8601 timestamp when the trade was executed. |
+| `ts` | `int64` | Yes | Unix timestamp of the trade (integer alternative to `created_time`). |
 
 ---
 
@@ -92,7 +114,7 @@ ingested as part of the snapshot pipeline and scoped to a time window.
 The primary join is between `markets` and `events` via `event_ticker`:
 
 ```sql
-SELECT m.*, e.category, e.series_ticker
+SELECT m.*, e.category, e.strike_date, e.strike_period
 FROM markets m
 LEFT JOIN events e ON m.event_ticker = e.event_ticker
 ```
@@ -116,71 +138,40 @@ LEFT JOIN events e ON m.event_ticker = e.event_ticker
 
 ---
 
-## Gap Analysis: Data We Are Not Capturing
+## Remaining Gaps: Data We Are Still Not Capturing
 
-The Kalshi API returns substantially more fields than we currently store. Below
-is a catalog of what we're missing, organized by significance.
+After adding the high- and medium-value fields above, the remaining uncaptured
+fields fall into two categories: low-value/deprecated fields on existing
+objects, and entirely separate data sources.
 
-### Missing Market Fields
-
-**High value — would improve analysis:**
-
-| Field | Type | Why it matters |
-|-------|------|----------------|
-| `expiration_time` | timestamp | Distinct from `close_time`. Markets can close for trading before they expire/settle. Needed for accurate lifecycle analysis. |
-| `updated_time` | timestamp | When the market was last modified. Useful for incremental ingestion and change detection. |
-| `settlement_value` | integer | Actual settlement payout. Important for P&L analysis beyond binary yes/no. |
-| `market_type` | string | Always `"binary"` today but future-proofs the schema. |
-| `subtitle` | string | Additional market context not captured in `title`. |
-| `can_close_early` | boolean | Whether the market can settle before its scheduled close. Affects risk modeling. |
-| `series_ticker` | string | Available directly on the market object; would eliminate the need to join through events for series-level analysis. |
-| `rules_primary` | string | The resolution rules text. Useful for NLP analysis of market structure. |
-| `rules_secondary` | string | Additional resolution criteria. |
-
-**Medium value — useful for specialized analysis:**
-
-| Field | Type | Why it matters |
-|-------|------|----------------|
-| `previous_yes_bid` | integer | Prior best bid — enables spread/movement analysis without candlestick data. |
-| `previous_yes_ask` | integer | Prior best ask. |
-| `previous_price` | integer | Prior last-traded price. |
-| `yes_sub_title` / `no_sub_title` | string | Labels for the yes/no sides of the market. |
-| `expected_expiration_time` | timestamp | When expiration is expected (may differ from `latest_expiration_time`). |
-| `latest_expiration_time` | timestamp | Latest possible expiration. |
-| `strike_type` | string | Type of strike for the market. |
-| `tick_size` | integer | Minimum price increment (deprecated in favor of `price_level_structure`). |
-| `notional_value` | integer | Contract notional value in cents. |
-
-**Low value / deprecated — probably skip:**
+### Skipped Market Fields (low value / deprecated)
 
 | Field | Type | Notes |
 |-------|------|-------|
 | `liquidity` / `liquidity_dollars` | int/string | Deprecated; returns 0. |
 | `response_price_units` | string | Always `"usd_cent"`. |
-| `*_dollars` fields | string | Dollar-string versions of cent prices (`"0.5600"`). Redundant if we have cent values. |
+| `*_dollars` fields | string | Dollar-string versions of cent prices (`"0.5600"`). Redundant with cent values. |
 | `*_fp` fields | string | Fixed-point versions of volume/OI. Redundant with integer fields. |
 | `fractional_trading_enabled` | boolean | Relevant only for fractional contract trading. |
 | `mve_*` fields | various | MVE combo market fields. We intentionally exclude MVE markets via `mve_filter=exclude`. |
 | `settlement_timer_seconds` | integer | Countdown to settlement. |
 | `settlement_ts` | timestamp | Added Dec 2025. Settlement timestamp. |
-| `price_level_structure` | object | Replaces `tick_size`. Defines the pricing grid. |
+| `tick_size` | integer | Deprecated in favor of `price_level_structure`. |
+| `price_level_structure` | object | Replaces `tick_size`. Nested object defining the pricing grid. |
+| `is_provisional` | boolean | Whether the market is provisional. |
 
-### Missing Event Fields
+### Skipped Event Fields (low value)
 
-| Field | Type | Why it matters |
-|-------|------|----------------|
-| `collateral_return_type` | string | How collateral is returned on settlement. |
-| `strike_date` | datetime | The date of the event's "strike" (e.g. the weather observation date). Very useful for time-series analysis of recurring events. |
-| `strike_period` | string | Period qualifier for the strike (e.g. daily, weekly). |
+| Field | Type | Notes |
+|-------|------|-------|
 | `available_on_brokers` | boolean | Whether the event is available through broker integrations. |
-| `product_metadata` | object | Additional structured metadata. |
+| `product_metadata` | object | Additional structured metadata (nested JSON). |
 
-### Missing Trade Fields
+### Skipped Trade Fields (redundant)
 
-| Field | Type | Why it matters |
-|-------|------|----------------|
-| `ts` | integer | Unix timestamp of the trade (alternative to `created_time`). |
-| `price` | integer | Generic trade price in cents (as opposed to the directional `yes_price`/`no_price`). |
+| Field | Type | Notes |
+|-------|------|-------|
+| `price` | integer | Generic trade price in cents. Redundant with `yes_price`/`no_price`. |
 | `count_fp` | string | Fixed-point contract count. Redundant with `count`. |
 | `*_dollars` fields | string | Dollar-string versions. Redundant with cent values. |
 
