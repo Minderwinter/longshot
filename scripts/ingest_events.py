@@ -41,7 +41,7 @@ def _get_fs() -> s3fs.S3FileSystem:
 
 
 def _events_path() -> str:
-    return f"s3://{SETTINGS.s3_bucket}/{SETTINGS.s3_prefix}/events/data.parquet"
+    return f"s3://{SETTINGS.s3_bucket}/{SETTINGS.s3_prefix}/events/all/data.parquet"
 
 
 def run() -> None:
