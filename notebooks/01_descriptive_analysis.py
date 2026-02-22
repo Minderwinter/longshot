@@ -2,7 +2,7 @@
 # requires-python = ">=3.12"
 # dependencies = [
 #     "marimo",
-#     "duckdb",
+#     "boto3",
 #     "pandas",
 #     "altair",
 #     "python-dotenv",
@@ -18,118 +18,102 @@ app = marimo.App(width="medium")
 @app.cell
 def setup():
     import marimo as mo
+    import altair as alt
 
-    from longshot.storage.db import EVENTS_ALL, MARKETS_ALL, connect
+    from longshot.storage.athena import query
 
-    db = connect()
-
-    # Create a view joining markets with event categories.
-    # Category lives on the event, not the market — exclude market's category column if present.
-    db.sql(f"""
-        CREATE OR REPLACE VIEW markets AS
-        SELECT
-            m.ticker, m.event_ticker, m.title, m.status,
-            m.yes_bid, m.yes_ask, m.no_bid, m.no_ask,
-            m.last_price, m.volume, m.volume_24h, m.open_interest,
-            m.close_time, m.open_time, m.result, m.created_time,
-            e.category
-        FROM '{MARKETS_ALL}' m
-        LEFT JOIN '{EVENTS_ALL}' e USING (event_ticker)
-    """)
-
-    return db, mo
+    return alt, mo, query
 
 
 @app.cell
-def overview(db, mo):
-    stats = db.sql("""
+def overview(mo, query):
+    stats = query("""
         SELECT
-            count(*)                                         AS total_markets,
-            count(*) FILTER (result != '' AND result IS NOT NULL) AS settled_markets,
-            count(DISTINCT category)                         AS categories,
-            sum(volume)                                      AS total_volume,
-            min(created_time)                                AS earliest_created,
-            max(created_time)                                AS latest_created
-        FROM markets
-    """).fetchone()
+            count(*)                                                    AS total_markets,
+            count_if(result != '' AND result IS NOT NULL)               AS settled_markets,
+            count(DISTINCT e.category)                                  AS categories,
+            sum(m.volume)                                               AS total_volume,
+            min(m.created_time)                                         AS earliest_created,
+            max(m.created_time)                                         AS latest_created
+        FROM markets m
+        LEFT JOIN events e ON m.event_ticker = e.event_ticker
+    """)
 
+    s = stats.iloc[0]
     mo.md(
         f"""
-        # Longshot Bias — Descriptive Analysis (Full Universe)
+        # Longshot Bias — Descriptive Analysis
 
-        Querying **all non-MVE markets** from S3 via DuckDB, joined with events for categories.
+        Querying **all non-MVE markets** via Athena, joined with events for categories.
 
         | Metric | Value |
         |--------|-------|
-        | Total markets | {stats[0]:,} |
-        | Settled markets | {stats[1]:,} |
-        | Categories | {stats[2]} |
-        | Total volume | {stats[3]:,.0f} |
-        | Earliest created | {stats[4]} |
-        | Latest created | {stats[5]} |
+        | Total markets | {int(s.total_markets):,} |
+        | Settled markets | {int(s.settled_markets):,} |
+        | Categories | {int(s.categories)} |
+        | Total volume | {int(s.total_volume):,} |
+        | Earliest created | {s.earliest_created} |
+        | Latest created | {s.latest_created} |
         """
     )
     return ()
 
 
 @app.cell
-def category_summary(db, mo):
-    cat_summary = db.sql("""
+def category_summary(mo, query):
+    cat_summary = query("""
         SELECT
-            category,
-            count(*)           AS market_count,
-            avg(yes_ask)       AS avg_yes_ask,
-            sum(volume)        AS total_volume,
-            avg(open_interest) AS avg_open_interest
-        FROM markets
-        GROUP BY category
-        ORDER BY market_count DESC
-    """).df()
+            e.category,
+            count(*)            AS market_count,
+            avg(m.yes_ask)      AS avg_yes_ask,
+            sum(m.volume)       AS total_volume,
+            avg(m.open_interest) AS avg_open_interest
+        FROM markets m
+        LEFT JOIN events e ON m.event_ticker = e.event_ticker
+        GROUP BY e.category
+        ORDER BY count(*) DESC
+    """)
 
     mo.md("## Markets by Category")
-    return (cat_summary,)
-
-
-@app.cell
-def show_category_table(cat_summary, mo):
     mo.ui.table(cat_summary, label="Category Summary")
     return ()
 
 
 @app.cell
-def price_distribution(db, mo):
-    import altair as alt
-
+def price_distribution(alt, mo, query):
     mo.md("## Distribution of Yes Ask Prices (settled markets)")
 
-    df = db.sql("""
-        SELECT yes_ask AS yes_ask_cents, category
-        FROM markets
-        WHERE yes_ask IS NOT NULL
-          AND result IN ('yes', 'no')
-    """).df()
+    price_df = query("""
+        SELECT
+            CAST(FLOOR(m.yes_ask / 2) * 2 AS INTEGER) AS price_bin,
+            e.category,
+            count(*) AS n
+        FROM markets m
+        LEFT JOIN events e ON m.event_ticker = e.event_ticker
+        WHERE m.yes_ask IS NOT NULL
+          AND m.yes_ask > 0
+          AND m.result IN ('yes', 'no')
+        GROUP BY FLOOR(m.yes_ask / 2) * 2, e.category
+        ORDER BY price_bin
+    """)
 
-    chart = (
-        alt.Chart(df)
+    price_chart = (
+        alt.Chart(price_df)
         .mark_bar()
         .encode(
-            alt.X("yes_ask_cents:Q", bin=alt.Bin(maxbins=50), title="Yes Ask (cents)"),
-            alt.Y("count()", title="Number of Markets"),
+            alt.X("price_bin:Q", title="Yes Ask (cents)"),
+            alt.Y("n:Q", title="Number of Markets"),
             alt.Color("category:N", title="Category"),
         )
         .properties(width=700, height=400, title="Yes Ask Price Distribution by Category")
     )
-    return alt, chart
 
-
-@app.cell
-def show_price_chart(chart, mo):
-    mo.ui.altair_chart(chart)
+    mo.ui.altair_chart(price_chart)
     return ()
 
 
 @app.cell
-def calibration_analysis(db, mo):
+def calibration_analysis(alt, mo, query):
     mo.md(
         """
         ## Longshot Bias Calibration
@@ -141,33 +125,28 @@ def calibration_analysis(db, mo):
         """
     )
 
-    calibration = db.sql("""
-        WITH settled AS (
+    calibration = query("""
+        WITH binned AS (
             SELECT
-                yes_ask AS yes_ask_cents,
+                CASE
+                    WHEN yes_ask <= 5  THEN  2.5
+                    WHEN yes_ask <= 10 THEN  7.5
+                    WHEN yes_ask <= 15 THEN 12.5
+                    WHEN yes_ask <= 20 THEN 17.5
+                    WHEN yes_ask <= 30 THEN 25.0
+                    WHEN yes_ask <= 40 THEN 35.0
+                    WHEN yes_ask <= 50 THEN 45.0
+                    WHEN yes_ask <= 60 THEN 55.0
+                    WHEN yes_ask <= 70 THEN 65.0
+                    WHEN yes_ask <= 80 THEN 75.0
+                    WHEN yes_ask <= 90 THEN 85.0
+                    ELSE 95.0
+                END AS bin_midpoint,
                 CASE WHEN result = 'yes' THEN 1 ELSE 0 END AS won
             FROM markets
             WHERE result IN ('yes', 'no')
               AND yes_ask IS NOT NULL
-        ),
-        binned AS (
-            SELECT
-                CASE
-                    WHEN yes_ask_cents <= 5  THEN  2.5
-                    WHEN yes_ask_cents <= 10 THEN  7.5
-                    WHEN yes_ask_cents <= 15 THEN 12.5
-                    WHEN yes_ask_cents <= 20 THEN 17.5
-                    WHEN yes_ask_cents <= 30 THEN 25.0
-                    WHEN yes_ask_cents <= 40 THEN 35.0
-                    WHEN yes_ask_cents <= 50 THEN 45.0
-                    WHEN yes_ask_cents <= 60 THEN 55.0
-                    WHEN yes_ask_cents <= 70 THEN 65.0
-                    WHEN yes_ask_cents <= 80 THEN 75.0
-                    WHEN yes_ask_cents <= 90 THEN 85.0
-                    ELSE 95.0
-                END AS bin_midpoint,
-                won
-            FROM settled
+              AND yes_ask > 0
         )
         SELECT
             bin_midpoint,
@@ -177,13 +156,8 @@ def calibration_analysis(db, mo):
         FROM binned
         GROUP BY bin_midpoint
         ORDER BY bin_midpoint
-    """).df()
+    """)
 
-    return (calibration,)
-
-
-@app.cell
-def calibration_chart(alt, calibration, mo):
     base = alt.Chart(calibration).encode(
         alt.X("implied_prob:Q", title="Implied Probability (midpoint of price bin)"),
     )
@@ -203,34 +177,36 @@ def calibration_chart(alt, calibration, mo):
         .encode(x="x:Q", y="y:Q")
     )
 
-    chart = (diagonal + points).properties(
+    calib_chart = (diagonal + points).properties(
         width=600,
         height=400,
         title="Calibration: Implied Probability vs Actual Win Rate",
     )
 
-    mo.ui.altair_chart(chart)
+    mo.ui.altair_chart(calib_chart)
     return ()
 
 
 @app.cell
-def flb_by_category(alt, db, mo):
-    cat_calib = db.sql("""
+def flb_by_category(alt, mo, query):
+    cat_calib = query("""
         SELECT
-            category,
+            e.category,
             count(*)     AS n,
-            avg(CASE WHEN result = 'yes' THEN 1 ELSE 0 END) AS actual_win_rate,
-            avg(yes_ask) / 100.0 AS implied_prob,
-            avg(yes_ask) / 100.0 - avg(CASE WHEN result = 'yes' THEN 1 ELSE 0 END) AS edge
-        FROM markets
-        WHERE result IN ('yes', 'no')
-          AND yes_ask IS NOT NULL
-          AND category IS NOT NULL
-        GROUP BY category
+            avg(CASE WHEN m.result = 'yes' THEN 1 ELSE 0 END) AS actual_win_rate,
+            avg(m.yes_ask) / 100.0 AS implied_prob,
+            avg(m.yes_ask) / 100.0 - avg(CASE WHEN m.result = 'yes' THEN 1 ELSE 0 END) AS edge
+        FROM markets m
+        LEFT JOIN events e ON m.event_ticker = e.event_ticker
+        WHERE m.result IN ('yes', 'no')
+          AND m.yes_ask IS NOT NULL
+          AND m.yes_ask > 0
+          AND e.category IS NOT NULL
+        GROUP BY e.category
         ORDER BY edge DESC
-    """).df()
+    """)
 
-    chart = (
+    flb_chart = (
         alt.Chart(cat_calib)
         .mark_bar()
         .encode(
@@ -247,25 +223,26 @@ def flb_by_category(alt, db, mo):
     )
 
     mo.md("## FLB Edge by Category")
-    mo.ui.altair_chart(chart)
+    mo.ui.altair_chart(flb_chart)
     return ()
 
 
 @app.cell
-def volume_by_category(alt, db, mo):
-    vol = db.sql("""
+def volume_by_category(alt, mo, query):
+    vol = query("""
         SELECT
-            category,
-            count(*)    AS market_count,
-            sum(volume) AS total_volume
-        FROM markets
-        WHERE volume IS NOT NULL
-          AND category IS NOT NULL
-        GROUP BY category
-        ORDER BY total_volume DESC
-    """).df()
+            e.category,
+            count(*)     AS market_count,
+            sum(m.volume) AS total_volume
+        FROM markets m
+        LEFT JOIN events e ON m.event_ticker = e.event_ticker
+        WHERE m.volume IS NOT NULL
+          AND e.category IS NOT NULL
+        GROUP BY e.category
+        ORDER BY sum(m.volume) DESC
+    """)
 
-    chart = (
+    vol_chart = (
         alt.Chart(vol)
         .mark_bar()
         .encode(
@@ -281,7 +258,7 @@ def volume_by_category(alt, db, mo):
     )
 
     mo.md("## Trade Volume by Category")
-    mo.ui.altair_chart(chart)
+    mo.ui.altair_chart(vol_chart)
     return ()
 
 
