@@ -330,21 +330,21 @@ def inv_dollar_vol_cat_chart(alt, mo, dollar_vol_cat):
 @app.cell
 def inv_dollar_vol_commentary(mo):
     mo.md(
-        """
+        r"""
         The investable amounts are strikingly small. At a 2% price-impact
-        threshold, the **entire 1-week cohort** supports just **$2,595** in
-        daily investable capital across 256 markets — an average of $10.13
-        per market. The **2-week cohort** is ~4.5x larger at **$11,561**
-        across 169 markets ($68.41 average), but this is still modest.
+        threshold, the **entire 1-week cohort** supports just **\$2,595** in
+        daily investable capital across 256 markets — an average of \$10.13
+        per market. The **2-week cohort** is ~4.5x larger at **\$11,561**
+        across 169 markets (\$68.41 average), but this is still modest.
 
         The category breakdown reveals extreme concentration. **Sports
-        (2-week)** accounts for $11,537 of the $11,561 two-week total
+        (2-week)** accounts for \$11,537 of the \$11,561 two-week total
         (99.8%). In the 1-week cohort, investable capacity is more spread:
-        Sports $747, Politics $683, Climate/Weather $631, then a long tail
-        of sub-$200 categories. The Khamenei political market alone
-        contributes $539 — over 20% of the 1-week investable total.
+        Sports \$747, Politics \$683, Climate/Weather \$631, then a long tail
+        of sub-\$200 categories. The Khamenei political market alone
+        contributes \$539 — over 20% of the 1-week investable total.
 
-        Combined across both cohorts: **~$14,155 per day in total
+        Combined across both cohorts: **~\$14,155 per day in total
         investable capacity** for the entire longshot universe. This is a
         fundamental constraint — even a small retail trader would struggle
         to deploy meaningful capital without moving prices.
@@ -478,23 +478,23 @@ def inv_top_markets_display(mo, top_investable):
 @app.cell
 def inv_distribution_commentary(mo):
     mo.md(
-        """
+        r"""
         The per-market distribution confirms that most longshot markets
         are effectively untradeable at any meaningful size. In the **1-week
         cohort**, 127 of 256 markets (50%) have investable amounts under
-        $1 — you can't even buy one contract without exceeding the 2%
-        impact threshold. Another 61 (24%) fall in the $1-5 range. Only
-        10 markets (4%) exceed $50 in investable capacity.
+        \$1 — you can't even buy one contract without exceeding the 2%
+        impact threshold. Another 61 (24%) fall in the \$1-5 range. Only
+        10 markets (4%) exceed \$50 in investable capacity.
 
         The **2-week cohort** is somewhat better but still thin: 81 of
-        169 markets (48%) are in the sub-$1 bin, while 15 markets (9%)
-        exceed $50. The top market (Rory McIlroy, PGA Genesis) supports
-        $6,101 in investable volume — a single sports event accounting
+        169 markets (48%) are in the sub-\$1 bin, while 15 markets (9%)
+        exceed \$50. The top market (Rory McIlroy, PGA Genesis) supports
+        \$6,101 in investable volume — a single sports event accounting
         for over half the two-week cohort's capacity.
 
         The top 20 markets are overwhelmingly Sports (16 of 20), with
         the 2-week PGA and EPL markets dominating. The highest-ranked
-        1-week market is the Khamenei political contract at $539 (#5
+        1-week market is the Khamenei political contract at \$539 (#5
         overall). Only 5 of the top 20 are from the 1-week cohort
         (NASCAR runners, weather, Khamenei).
         """
@@ -508,42 +508,42 @@ def inv_distribution_commentary(mo):
 @app.cell
 def inv_overall_findings(mo):
     mo.md(
-        """
+        r"""
         ---
 
         ## Overall Findings
 
         1. **Half of longshot markets fail the liquidity screen.** The
-           volume_24h >= 100 filter eliminates 50% of the 1-week cohort
+           volume\_24h >= 100 filter eliminates 50% of the 1-week cohort
            (509 to 256) and 40% of the 2-week cohort (282 to 169). The
            categories most likely to harbor FLB edge (Crypto, Entertainment,
            Politics) have the lowest survival rates (40-46%).
 
-        2. **Total investable capacity is ~$14,155 per day.** At a 2%
-           price-impact threshold, the 1-week cohort supports $2,595 and
-           the 2-week cohort $11,561. This is the ceiling for a
+        2. **Total investable capacity is ~\$14,155 per day.** At a 2%
+           price-impact threshold, the 1-week cohort supports \$2,595 and
+           the 2-week cohort \$11,561. This is the ceiling for a
            non-price-impacting longshot strategy across all of Kalshi.
 
-        3. **Most markets can't support even a $1 position.** Half of
+        3. **Most markets can't support even a \$1 position.** Half of
            screened markets in both cohorts have investable amounts under
-           $1. Only 25 markets total (10 in 1-week, 15 in 2-week)
-           exceed $50 in daily investable capacity.
+           \$1. Only 25 markets total (10 in 1-week, 15 in 2-week)
+           exceed \$50 in daily investable capacity.
 
         4. **The investability paradox is confirmed.** The 2-week Sports
            cohort — which notebook 08 identified as the *worst* FLB
            candidate due to efficient pricing — holds 82% of total
-           investable capacity ($11,537 of $14,155). The diverse 1-week
-           cohort where FLB edge is most plausible offers just $2,595.
+           investable capacity (\$11,537 of \$14,155). The diverse 1-week
+           cohort where FLB edge is most plausible offers just \$2,595.
 
         5. **A single event dominates capacity.** The PGA Genesis
-           Invitational alone accounts for $6,101 investable — 43% of
+           Invitational alone accounts for \$6,101 investable — 43% of
            all longshot investable volume. Remove it and total capacity
-           drops to ~$8,000.
+           drops to ~\$8,000.
 
         6. **Strategic conclusion.** The longshot FLB strategy on Kalshi
            faces a hard capacity constraint. Even if the mispricing is
            real, the maximum non-impacting daily deployment is roughly
-           $2,500-14,000 depending on how aggressively you trade into
+           \$2,500-14,000 depending on how aggressively you trade into
            Sports markets. At these sizes, transaction costs (spreads of
            3-10 cents on 3-15 cent contracts = 20-100% round-trip cost)
            likely consume any edge. The FLB on Kalshi is an academic
