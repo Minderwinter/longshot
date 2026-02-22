@@ -14,6 +14,5 @@ __pycache__/
 # OS
 .DS_Store
 
-# Notebook exports & cache
-notebooks/html/
+# Notebook cache
 notebooks/__marimo__/
