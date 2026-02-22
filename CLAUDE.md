@@ -18,6 +18,15 @@
 - **Pre-aggregate in SQL.** Never pull millions of raw rows into the notebook — Athena can handle the aggregation server-side. For histograms, compute bins and counts in SQL rather than pulling raw values for client-side binning.
 - **SQL quoting in marimo**: Athena SQL uses single quotes for string literals (`'1-week'`). Always pass SQL via Python **f-strings with triple double quotes** (`f"""..."""`), which allows single quotes inside the SQL without escaping. Never use double quotes inside the SQL — Athena treats them as identifier quotes, not string delimiters. When running queries outside marimo (e.g., in a `python3 -c "..."` shell command), use a heredoc (`<< 'PYEOF'`) to avoid shell quote conflicts.
 - **Dollar signs in `mo.md()`**: Marimo renders markdown with LaTeX support, so bare `$` is interpreted as a math delimiter. To display literal dollar amounts, escape as `\$`. To avoid Python's "invalid escape sequence" warning, use a **raw string**: `mo.md(r"""...\$2,595...""")`.
+- **Multi-output cells**: In HTML export, only the **last** `mo.md()`/`mo.ui.table()`/`mo.ui.altair_chart()` call renders. To display multiple elements in one cell, wrap them in `mo.output.replace(mo.vstack([...]))`:
+  ```python
+  mo.output.replace(mo.vstack([
+      mo.md("## Section Header"),
+      mo.ui.table(df, label="Results"),
+      mo.md("### Chart"),
+      mo.ui.altair_chart(chart),
+  ]))
+  ```
 - Export HTML with: `uv run marimo export html notebooks/<name>.py -o notebooks/html/<name>.html`
 
 ## Project Structure
